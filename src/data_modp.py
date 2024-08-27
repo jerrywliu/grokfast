@@ -1,5 +1,19 @@
 import torch
 
+# Compute y^exp (mod p)
+# y: tensor
+# exp, p: int
+def mod_exp(y, exp, p):
+    result = torch.ones_like(y)
+    base = y % p
+    rem = exp
+    while rem > 0:
+        if rem % 2 == 1:
+            result = (result * base) % p
+        base = (base * base) % p
+        rem = rem // 2
+    return result
+
 def mod_p_data(p, eq_token, op_token, task="multiplication"):
     """x◦y = x/y (mod p) for 0 ≤ x < p, 0 < y < p
     """
@@ -17,12 +31,12 @@ def mod_p_data(p, eq_token, op_token, task="multiplication"):
     elif task == "subtraction":
         result = (x - y) % p
     elif task == "division": # TODO JL fix
-        y_inv = pow(y, p-2, p)
+        y_inv = mod_exp(y, p-2, p)
         return (x * y_inv) % p
     elif task == "parity_division": # TODO JL fix
         if (y % 2) != 0:
             # Division
-            y_inv = pow(y, p-2, p)
+            y_inv = mod_exp(y, p-2, p)
             return (x * y_inv) % p
         else:
             # Subtraction
