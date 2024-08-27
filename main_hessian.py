@@ -43,7 +43,7 @@ def main(args):
     print(f'Total number of parameters: {nparams}')
     print(f"Device: {device}")
 
-    data = mod_p_data(args.p, eq_token, op_token)
+    data = mod_p_data(args.p, eq_token, op_token, task=args.task)
 
     train_idx, valid_idx = torch.randperm(data.shape[1]).split(data.shape[1] // 2)
     train_data, valid_data = data[:, train_idx], data[:, valid_idx]
@@ -221,13 +221,15 @@ def main(args):
 if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_argument("--task", type=str, default="multiplication")
+    parser.add_argument("--filter", type=str, default="none")
     parsed_args = parser.parse_args()
     
     # Instantiate and set values
     args = ExptSettings()
     args.label = args.task = parsed_args.task
+    args.filter = parsed_args.filter
     args.save_weights = True
-    args.hessian_save_every = 1
+    args.hessian_save_every = 100
     
     # Run experiment
     filter_str = ('_' if args.label != '' else '') + args.filter
@@ -250,6 +252,7 @@ if __name__ == "__main__":
     if args.lr != 1e-3:
         optim_suffix = optim_suffix + f'_lrx{int(args.lr / 1e-3)}'
 
-    print(f'Experiment results saved under name: {args.label + filter_str + filter_suffix + optim_suffix}')
+    args.label = args.label + filter_str + filter_suffix + optim_suffix
+    print(f'Experiment results saved under name: {args.label}')
 
     main(args)

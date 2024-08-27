@@ -15,6 +15,7 @@ module load python
 conda activate icon
 
 task=$1
+# cmd="python main_hessian.py --task $task --filter ema"
 cmd="python main_hessian.py --task $task"
 
 set -x

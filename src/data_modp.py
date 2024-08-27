@@ -16,10 +16,10 @@ def mod_p_data(p, eq_token, op_token, task="multiplication"):
         result = (x + y) % p
     elif task == "subtraction":
         result = (x - y) % p
-    elif task == "division":
+    elif task == "division": # TODO JL fix
         y_inv = pow(y, p-2, p)
         return (x * y_inv) % p
-    elif task == "parity_division":
+    elif task == "parity_division": # TODO JL fix
         if (y % 2) != 0:
             # Division
             y_inv = pow(y, p-2, p)
@@ -34,7 +34,7 @@ def mod_p_data(p, eq_token, op_token, task="multiplication"):
     elif task == "quad2":
         result = (x**2 + x*y + y**2 + x) % p
     elif task == "cubic1":
-        result = (x**3 + xy) % p
+        result = (x**3 + x*y) % p
     elif task == "cubic2":
         result = (x**3 + x*(y**2) + y) % p
 
