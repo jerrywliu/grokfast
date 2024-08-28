@@ -13,16 +13,20 @@ class ExptSettings:
         self.beta2 = 0.98
         self.weight_decay = 1.0
         self.optimizer = "AdamW"
+        
         # Grokfast
         self.filter = "none"  # choices: ["none", "ma", "ema", "fir"]
         self.alpha = 0.99
         self.window_size = 100
         self.lamb = 5.0
+
         # Ablation studies
         self.two_stage = False
         self.save_weights = False
+
         # Hessian
         self.hessian_save_every = 20
+        self.explicit_hessian_regularization = 0.0
 
         # NSM
         self.nsm = False

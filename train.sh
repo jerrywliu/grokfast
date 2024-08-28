@@ -16,7 +16,8 @@ conda activate icon
 
 task=$1
 # cmd="python main_hessian.py --task $task --filter ema"
-cmd="python main_hessian.py --task $task"
+# cmd="python main_hessian.py --task $task"
+cmd="python main_hessian.py --explicit_hessian_regularization 0.01"
 
 set -x
 srun -l \

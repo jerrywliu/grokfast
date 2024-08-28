@@ -12,7 +12,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 # Pytorch's efficient attention doesn't allow Hessian computation by default
-from torch.nn.attention import SDPBackend, sdpa_kernel
+# from torch.nn.attention import SDPBackend, sdpa_kernel
 
 from pyhessian import hessian
 
@@ -134,7 +134,8 @@ def main(args):
     pbar = tqdm(range(int(args.budget) // steps_per_epoch))
     for e in pbar:
         if save_hessian(e):
-            with torch.set_grad_enabled(True), sdpa_kernel(SDPBackend.MATH):
+            # with torch.set_grad_enabled(True), sdpa_kernel(SDPBackend.MATH):
+            with torch.set_grad_enabled(True):
                 # Compute train Hessian
                 hessian_comp = hessian(model, hessian_loss_func, data=(train_data[:-1], train_data[-1]), cuda=(torch.cuda.is_available()))
                 train_trace = np.mean(hessian_comp.trace())
@@ -171,6 +172,24 @@ def main(args):
                     logits = model(input[:-1])
                     # calculate loss only on the answer part of the equation (last element)
                     loss = criterion(logits[-1], input[-1])
+
+                    # Explicit Hessian regularization
+                    if args.explicit_hessian_regularization > 0 and is_train:
+
+                        with torch.backends.cuda.sdp_kernel(enable_math=True, enable_flash=False, enable_mem_efficient=False):
+                            # Compute the first-order gradients of the loss with respect to the parameters
+                            grads = torch.autograd.grad(loss, model.parameters(), create_graph=True)
+
+                            # Compute Hessian trace
+                            hessian_trace = 0.0
+                            for grad, param in zip(grads, model.parameters()):
+                                grad_squared = grad ** 2
+                                hessian_diag_elements = torch.autograd.grad(grad_squared.sum(), param, retain_graph=True)[0]
+                                hessian_trace += hessian_diag_elements.sum()
+
+                            # Add the regularization term to the loss
+                            loss += 0.5 * args.explicit_hessian_regularization * hessian_trace
+
                     total_loss += loss.item() * input.shape[-1]
 
                 if is_train:
@@ -210,7 +229,7 @@ def main(args):
                         optimizer.store_gradients(zero_grad=True, store_weights=True, update_weight=nsm_lam)
                         # 2nd forward-backward step: taking perturbations and computing gradients
                         update_weight = (1-nsm_lam) / (2*nsm_num_perturbs) if nsm_use_neg else (1-nsm_lam) / nsm_num_perturbs
-                        for i in range(nsm_num_perturbs):
+                        for _ in range(nsm_num_perturbs):
                             optimizer.first_step(zero_grad=True, store_perturb=True)
                             # Model
                             logits = model(input[:-1])
@@ -325,6 +344,7 @@ def main(args):
                 plt.ylabel("Hessian trace")
                 plt.xscale("log", base=10)
                 plt.yscale("log", base=10)
+                plt.ylim(1e-7, 1e7)
                 plt.grid()
                 plt.savefig(f"results/hessiantrace_{args.label}.png", dpi=150)
                 plt.close()
@@ -370,6 +390,7 @@ if __name__ == "__main__":
     parser.add_argument("--nsm_sigma", type=float, default=0.01)
     parser.add_argument("--sam", action="store_true")
     parser.add_argument("--no_hessian", action="store_true")
+    parser.add_argument("--explicit_hessian_regularization", type=float, default=0)
     parsed_args = parser.parse_args()
     
     # Instantiate and set values
@@ -381,6 +402,7 @@ if __name__ == "__main__":
     args.optimizer = parsed_args.optimizer
     # Hessian
     args.hessian_save_every = 0 if parsed_args.no_hessian else 100
+    args.explicit_hessian_regularization = parsed_args.explicit_hessian_regularization
     # NSM
     args.nsm = parsed_args.nsm
     args.nsm_sigma = parsed_args.nsm_sigma
@@ -412,6 +434,8 @@ if __name__ == "__main__":
         optim_suffix = optim_suffix + f'_wd{args.weight_decay:.1e}'.replace('.', '')
     if args.lr != 1e-3:
         optim_suffix = optim_suffix + f'_lrx{int(args.lr / 1e-3)}'
+    if args.explicit_hessian_regularization != 0:
+        optim_suffix = optim_suffix + f'_her{args.explicit_hessian_regularization:.1e}'.replace('.', '')
 
     args.label = args.label + filter_str + filter_suffix + optim_suffix
     print(f'Experiment results saved under name: {args.label}')
