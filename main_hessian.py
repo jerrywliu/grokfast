@@ -12,14 +12,17 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 # Pytorch's efficient attention doesn't allow Hessian computation by default
-# from torch.nn.attention import SDPBackend, sdpa_kernel
+from torch.nn.attention import SDPBackend, sdpa_kernel
 
 from pyhessian import hessian
 
 from grokfast import *
 
+# Config
 from src.config import ExptSettings
-from src.data_modp import mod_p_data
+# Data
+from src.data_modp import mod_p_data, split_data
+# Model
 from src.model import Decoder
 # Optimizers: NSM, SAM
 from src.optimizers.nsm import NSM
@@ -52,11 +55,7 @@ def main(args):
     print(f"Device: {device}")
 
     data = mod_p_data(args.p, eq_token, op_token, task=args.task)
-
-    train_idx, valid_idx = torch.randperm(data.shape[1]).split(data.shape[1] // 2)
-    train_data, valid_data = data[:, train_idx], data[:, valid_idx]
-    print(f"Train data: {train_data.shape}")
-    print(f"Valid data: {valid_data.shape}")
+    train_data, valid_data = split_data(data, split_ratio=args.split_ratio)
 
     # For most experiments we used AdamW optimizer with learning rate 10−3,
     # weight decay 1, β1 = 0.9, β2 = 0.98
@@ -134,8 +133,8 @@ def main(args):
     pbar = tqdm(range(int(args.budget) // steps_per_epoch))
     for e in pbar:
         if save_hessian(e):
-            # with torch.set_grad_enabled(True), sdpa_kernel(SDPBackend.MATH):
-            with torch.set_grad_enabled(True):
+            with torch.set_grad_enabled(True), sdpa_kernel(SDPBackend.MATH):
+            # with torch.set_grad_enabled(True):
                 # Compute train Hessian
                 hessian_comp = hessian(model, hessian_loss_func, data=(train_data[:-1], train_data[-1]), cuda=(torch.cuda.is_available()))
                 train_trace = np.mean(hessian_comp.trace())
@@ -382,10 +381,15 @@ def main(args):
             
 if __name__ == "__main__":
     parser = ArgumentParser()
+    # Data
     parser.add_argument("--task", type=str, default="multiplication")
+    parser.add_argument("--p", type=int, default=97)
+    parser.add_argument("--split_ratio", type=float, default=0.5)
+    # Optimizer
     parser.add_argument("--filter", type=str, default="none")
     parser.add_argument("--wd", type=float, default=0)
     parser.add_argument("--optimizer", type=str, default="AdamW")
+    # Hessian regularization
     parser.add_argument("--nsm", action="store_true")
     parser.add_argument("--nsm_sigma", type=float, default=0.01)
     parser.add_argument("--sam", action="store_true")
@@ -395,7 +399,11 @@ if __name__ == "__main__":
     
     # Instantiate and set values
     args = ExptSettings()
+    # Data
     args.label = args.task = parsed_args.task
+    args.p = parsed_args.p
+    args.split_ratio = parsed_args.split_ratio
+    # Optimizer
     args.filter = parsed_args.filter
     args.save_weights = True
     args.weight_decay = parsed_args.wd

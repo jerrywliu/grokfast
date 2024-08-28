@@ -1,5 +1,12 @@
 import torch
 
+def split_data(data, split_ratio=0.5):
+    train_idx, valid_idx = torch.randperm(data.shape[1]).split(int(data.shape[1] * split_ratio))
+    train_data, valid_data = data[:, train_idx], data[:, valid_idx]
+    print(f"Train data: {train_data.shape}")
+    print(f"Valid data: {valid_data.shape}")
+    return train_data, valid_data
+
 # Compute y^exp (mod p)
 # y: tensor
 # exp, p: int

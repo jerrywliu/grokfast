@@ -2,9 +2,11 @@ class ExptSettings:
     def __init__(self):
         self.label = "base"
         self.seed = 0
+
         # Data
         self.p = 97
         self.task = "multiplication"
+        self.split_ratio = 0.5
         
         self.budget = 3e5
         self.batch_size = 512
