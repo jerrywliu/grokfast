@@ -21,7 +21,7 @@ from grokfast import *
 # Config
 from src.config import ExptSettings
 # Data
-from src.data.modp import mod_p_data, split_data
+from src.data_modp import mod_p_data, split_data
 # Model
 from src.models.transformer import Decoder
 # Optimizers: NSM, SAM
