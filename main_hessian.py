@@ -5,11 +5,14 @@ import copy
 
 import matplotlib.pyplot as plt
 from tqdm import tqdm
+from time import time
 
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+# Pytorch's efficient attention doesn't allow Hessian computation by default
+from torch.nn.attention import SDPBackend, sdpa_kernel
 
 from pyhessian import hessian
 
@@ -18,6 +21,11 @@ from grokfast import *
 from src.config import ExptSettings
 from src.data_modp import mod_p_data
 from src.model import Decoder
+# Optimizers: NSM, SAM
+from src.optimizers.nsm import NSM
+from src.optimizers.sam import SAM
+# Margins
+from src.util import compute_margin
 
 
 def main(args):
@@ -52,27 +60,70 @@ def main(args):
 
     # For most experiments we used AdamW optimizer with learning rate 10−3,
     # weight decay 1, β1 = 0.9, β2 = 0.98
-    optimizer = getattr(torch.optim, args.optimizer)(
-        model.parameters(),
-        lr=args.lr,
-        weight_decay=args.weight_decay,
-        betas=(args.beta1, args.beta2),
-    )
-
-    #  linear learning rate warmup over the first 10 updates
-    scheduler = torch.optim.lr_scheduler.LambdaLR(
-        optimizer, lambda update: 1 if update > 10 else update / 10
-    )
+    if args.nsm:
+        # NSM optimizer
+        print(f"Using NSM optimizer with sigma={args.nsm_sigma}, distribution={args.nsm_distribution}")
+        base_optimizer = getattr(torch.optim, args.optimizer)
+        optimizer = NSM(
+            model.parameters(),
+            base_optimizer,
+            sigma=args.nsm_sigma,
+            distribution=args.nsm_distribution,
+            lr=args.lr,
+            weight_decay=args.weight_decay,
+            betas=(args.beta1, args.beta2),
+        )
+        #  linear learning rate warmup over the first 10 updates
+        # scheduler = torch.optim.lr_scheduler.LambdaLR(
+        #     optimizer.base_optimizer, lambda update: 1 if update > 10 else update / 10
+        # )
+    elif args.sam:
+        # SAM optimizer
+        print(f"Using SAM optimizer")
+        base_optimizer = getattr(torch.optim, args.optimizer)
+        optimizer = SAM(
+            model.parameters(),
+            base_optimizer,
+            rho=args.sam_rho,
+            lr=args.lr,
+            weight_decay=args.weight_decay,
+            betas=(args.beta1, args.beta2),
+        )
+        #  linear learning rate warmup over the first 10 updates
+        # scheduler = torch.optim.lr_scheduler.LambdaLR(
+        #     optimizer.base_optimizer, lambda update: 1 if update > 10 else update / 10
+        # )
+    else:
+        # AdamW optimizer
+        optimizer = getattr(torch.optim, args.optimizer)(
+            model.parameters(),
+            lr=args.lr,
+            weight_decay=args.weight_decay,
+            betas=(args.beta1, args.beta2),
+        )
+        #  linear learning rate warmup over the first 10 updates
+        scheduler = torch.optim.lr_scheduler.LambdaLR(
+            optimizer, lambda update: 1 if update > 10 else update / 10
+        )
+    
+    # Loss
+    criterion = F.cross_entropy
+    # criterion = nn.CrossEntropyLoss()
 
     steps_per_epoch = math.ceil(train_data.shape[1] / args.batch_size)
 
     its, train_acc, val_acc, train_loss, val_loss = [], [], [], [], []
     hessian_its, train_hessiantrace, val_hessiantrace = [], [], []
+    train_margin, val_margin = [], []
     grads = None
     i = 0
     
     # Compute/save hessian condition
+    if args.hessian_save_every == 0:
+        print("Not saving Hessian")
     def save_hessian(e):
+        if args.hessian_save_every == 0:
+            return False
         return (e < 20 or (e+1) % args.hessian_save_every == 0)
     hessian_loss_func = lambda output, target: F.cross_entropy(output[-1], target)
 
@@ -82,9 +133,8 @@ def main(args):
     print(f"Epochs: {int(args.budget) // steps_per_epoch}")
     pbar = tqdm(range(int(args.budget) // steps_per_epoch))
     for e in pbar:
-        
         if save_hessian(e):
-            with torch.set_grad_enabled(True):
+            with torch.set_grad_enabled(True), sdpa_kernel(SDPBackend.MATH):
                 # Compute train Hessian
                 hessian_comp = hessian(model, hessian_loss_func, data=(train_data[:-1], train_data[-1]), cuda=(torch.cuda.is_available()))
                 train_trace = np.mean(hessian_comp.trace())
@@ -99,6 +149,7 @@ def main(args):
                 val_hessiantrace.append(val_trace)
                 
             pbar.set_description(f"Train Hessian: {train_trace}, valid Hessian: {val_trace}")
+
         # randomly shuffle train data
         train_data = train_data[:, torch.randperm(train_data.shape[1])]
 
@@ -107,6 +158,8 @@ def main(args):
             model.train(is_train)
             total_loss = 0
             total_acc = 0
+            total_margin = 0
+            total_num_correct_margin = 0
 
             # torch.split faster than dataloader with tensor
             dl = torch.split(data, args.batch_size, dim=1)
@@ -116,43 +169,106 @@ def main(args):
 
                 with torch.set_grad_enabled(is_train):
                     logits = model(input[:-1])
-                    # calculate loss only on the answer part of the equation (last element
-                    loss = F.cross_entropy(logits[-1], input[-1])
+                    # calculate loss only on the answer part of the equation (last element)
+                    loss = criterion(logits[-1], input[-1])
                     total_loss += loss.item() * input.shape[-1]
 
                 if is_train:
-                    model.zero_grad()
-                    loss.backward()
+                    if not(args.nsm or args.sam):
+                        model.zero_grad()
+                        loss.backward()
 
-                    #######
+                        #######
 
-                    trigger = i < 500 if args.two_stage else False
+                        trigger = i < 500 if args.two_stage else False
 
-                    if args.filter == "none":
-                        pass
-                    elif args.filter == "ma":
-                        grads = gradfilter_ma(model, grads=grads, window_size=args.window_size, lamb=args.lamb, trigger=trigger)
-                    elif args.filter == "ema":
-                        grads = gradfilter_ema(model, grads=grads, alpha=args.alpha, lamb=args.lamb)
-                    else:
-                        raise ValueError(f"Invalid gradient filter type `{args.filter}`")
+                        if args.filter == "none":
+                            pass
+                        elif args.filter == "ma":
+                            grads = gradfilter_ma(model, grads=grads, window_size=args.window_size, lamb=args.lamb, trigger=trigger)
+                        elif args.filter == "ema":
+                            grads = gradfilter_ema(model, grads=grads, alpha=args.alpha, lamb=args.lamb)
+                        else:
+                            raise ValueError(f"Invalid gradient filter type `{args.filter}`")
 
-                    #######
+                        #######
 
-                    optimizer.step()
-                    scheduler.step()
+                        optimizer.step()
+                        scheduler.step()
+
+                    # NSM
+                    elif args.nsm:
+                        # TODO hardcoded params
+                        nsm_lam = 0
+                        nsm_num_perturbs = 1
+                        nsm_use_neg = True
+
+                        # 1st forward-backward step: compute the gradients on the original weight
+                        logits = model(input[:-1])
+                        loss = criterion(logits[-1], input[-1])
+                        loss.backward()
+                        optimizer.store_gradients(zero_grad=True, store_weights=True, update_weight=nsm_lam)
+                        # 2nd forward-backward step: taking perturbations and computing gradients
+                        update_weight = (1-nsm_lam) / (2*nsm_num_perturbs) if nsm_use_neg else (1-nsm_lam) / nsm_num_perturbs
+                        for i in range(nsm_num_perturbs):
+                            optimizer.first_step(zero_grad=True, store_perturb=True)
+                            # Model
+                            logits = model(input[:-1])
+                            criterion(logits[-1], input[-1]).backward()
+                            optimizer.store_gradients(zero_grad=True, store_weights=False, update_weight=update_weight)
+                            if nsm_use_neg:
+                                optimizer.first_step(zero_grad=True, store_perturb=False)
+                                # Model
+                                logits = model(input[:-1])
+                                criterion(logits[-1], input[-1]).backward()
+                                optimizer.store_gradients(zero_grad=True, store_weights=False, update_weight=update_weight)
+                        optimizer.second_step(zero_grad=True)
+
+                    elif args.sam:
+                        # SAM
+                        logits = model(input[:-1])
+                        loss = criterion(logits[-1], input[-1])
+                        loss.backward()
+                        optimizer.first_step(zero_grad=True)
+
+                        logits = model(input[:-1])
+                        criterion(logits[-1], input[-1]).backward()
+                        optimizer.second_step(zero_grad=True)
+
+                        # Closure implementation of SAM
+                        # def closure():
+                        #     logits = model(input[:-1])
+                        #     loss = criterion(logits[-1], input[-1])
+                        #     loss.backward()
+                        #     return loss
+                        # loss = criterion(logits[-1], input[-1])
+                        # loss.backward()
+                        # optimizer.step(closure)
+                        # optimizer.zero_grad()
+
                     i += 1
 
+                # Compute accuracy
                 acc = (logits[-1].argmax(-1) == input[-1]).float().mean()
                 total_acc += acc.item() * input.shape[-1]
+
+                # Compute margin
+                # logits: (seq_len, batch_size, num_tokens)
+                # input[-1]: (batch_size)
+                # output: (batch_size)
+                margin, num_correct_margin = compute_margin(logits[-1], input[-1])
+                total_margin += margin * num_correct_margin
+                total_num_correct_margin += num_correct_margin
 
             if is_train:
                 train_acc.append(total_acc / train_data.shape[-1])
                 train_loss.append(total_loss / train_data.shape[-1])
+                train_margin.append(total_margin / total_num_correct_margin)
                 its.append(i)
             else:
                 val_acc.append(total_acc / valid_data.shape[-1])
                 val_loss.append(total_loss / valid_data.shape[-1])
+                val_margin.append(total_margin / total_num_correct_margin)
 
         if args.save_weights:
             # do_save = e <= 500 or (e > 500 and (e + 1) % 100 == 0) or e == int(args.budget) // steps_per_epoch - 1
@@ -199,17 +315,30 @@ def main(args):
             plt.savefig(f"results/logloss_{args.label}.png", dpi=150)
             plt.close()
 
-            # Hessian
-            plt.plot(hessian_its, [abs(trace) for trace in train_hessiantrace], label="train")
-            plt.plot(hessian_its, [abs(trace) for trace in val_hessiantrace], label="val")
+            if args.hessian_save_every > 0:
+                # Hessian
+                plt.plot(hessian_its, [abs(trace) for trace in train_hessiantrace], label="train")
+                plt.plot(hessian_its, [abs(trace) for trace in val_hessiantrace], label="val")
+                plt.legend()
+                plt.title(f"{args.task} (training on 50% of data)")
+                plt.xlabel("Optimization Steps")
+                plt.ylabel("Hessian trace")
+                plt.xscale("log", base=10)
+                plt.yscale("log", base=10)
+                plt.grid()
+                plt.savefig(f"results/hessiantrace_{args.label}.png", dpi=150)
+                plt.close()
+
+            # Margin
+            plt.plot(its, train_margin, label="train")
+            plt.plot(its, val_margin, label="val")
             plt.legend()
             plt.title(f"{args.task} (training on 50% of data)")
             plt.xlabel("Optimization Steps")
-            plt.ylabel("Hessian trace")
+            plt.ylabel("Margin")
             plt.xscale("log", base=10)
-            plt.yscale("log", base=10)
             plt.grid()
-            plt.savefig(f"results/hessiantrace_{args.label}.png", dpi=150)
+            plt.savefig(f"results/margin_{args.label}.png", dpi=150)
             plt.close()
 
             results = {
@@ -235,6 +364,12 @@ if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_argument("--task", type=str, default="multiplication")
     parser.add_argument("--filter", type=str, default="none")
+    parser.add_argument("--wd", type=float, default=0)
+    parser.add_argument("--optimizer", type=str, default="AdamW")
+    parser.add_argument("--nsm", action="store_true")
+    parser.add_argument("--nsm_sigma", type=float, default=0.01)
+    parser.add_argument("--sam", action="store_true")
+    parser.add_argument("--no_hessian", action="store_true")
     parsed_args = parser.parse_args()
     
     # Instantiate and set values
@@ -242,7 +377,16 @@ if __name__ == "__main__":
     args.label = args.task = parsed_args.task
     args.filter = parsed_args.filter
     args.save_weights = True
-    args.hessian_save_every = 100
+    args.weight_decay = parsed_args.wd
+    args.optimizer = parsed_args.optimizer
+    # Hessian
+    args.hessian_save_every = 0 if parsed_args.no_hessian else 100
+    # NSM
+    args.nsm = parsed_args.nsm
+    args.nsm_sigma = parsed_args.nsm_sigma
+    # SAM
+    args.sam = parsed_args.sam
+    args.sam_rho = 0.05
     
     # Run experiment
     filter_str = ('_' if args.label != '' else '') + args.filter
@@ -260,6 +404,10 @@ if __name__ == "__main__":
         raise ValueError(f"Unrecognized filter type {args.filter}")
 
     optim_suffix = ''
+    if args.nsm:
+        optim_suffix = optim_suffix + f'_nsm{args.nsm_sigma:.1e}'.replace('.', '')
+    elif args.sam:
+        optim_suffix = optim_suffix + '_sam'
     if args.weight_decay != 0:
         optim_suffix = optim_suffix + f'_wd{args.weight_decay:.1e}'.replace('.', '')
     if args.lr != 1e-3:

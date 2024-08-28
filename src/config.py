@@ -11,8 +11,8 @@ class ExptSettings:
         self.lr = 1e-3
         self.beta1 = 0.9
         self.beta2 = 0.98
-        self.weight_decay = 0
-        self.optimizer = "Adam"
+        self.weight_decay = 1.0
+        self.optimizer = "AdamW"
         # Grokfast
         self.filter = "none"  # choices: ["none", "ma", "ema", "fir"]
         self.alpha = 0.99
@@ -23,3 +23,8 @@ class ExptSettings:
         self.save_weights = False
         # Hessian
         self.hessian_save_every = 20
+
+        # NSM
+        self.nsm = False
+        self.nsm_sigma = 0.01
+        self.nsm_distribution = "normal"
