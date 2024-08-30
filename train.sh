@@ -30,6 +30,17 @@ cmd="CUDA_VISIBLE_DEVICES=1 python main.py --task quad1 --nsm --nsm_sigma 0.01 -
 cmd="CUDA_VISIBLE_DEVICES=2 python main.py --task quad1 --nsm --nsm_sigma 0.03 --split_ratio 0.75"
 cmd="CUDA_VISIBLE_DEVICES=3 python main.py --task quad1 --nsm --nsm_sigma 0.1 --split_ratio 0.75"
 
+# Current unregularized results aren't matching the original grokking paper.
+cmd="CUDA_VISIBLE_DEVICES=0 python main.py --task quad2 --split_ratio 0.8 --budget 300000"
+cmd="CUDA_VISIBLE_DEVICES=1 python main.py --task quad2 --split_ratio 0.9 --budget 300000"
+cmd="CUDA_VISIBLE_DEVICES=2 python main.py --task quad2 --split_ratio 0.95 --budget 300000"
+cmd="CUDA_VISIBLE_DEVICES=3 python main.py --task quad2 --split_ratio 0.975 --budget 300000"
+
+cmd="CUDA_VISIBLE_DEVICES=0 python main.py --task quad1 --split_ratio 0.8 --budget 300000"
+cmd="CUDA_VISIBLE_DEVICES=1 python main.py --task quad1 --split_ratio 0.9 --budget 300000"
+cmd="CUDA_VISIBLE_DEVICES=2 python main.py --task quad1 --split_ratio 0.95 --budget 300000"
+cmd="CUDA_VISIBLE_DEVICES=3 python main.py --task quad1 --split_ratio 0.975 --budget 300000"
+
 set -x
 srun -l \
     bash -c "

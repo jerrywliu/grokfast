@@ -386,6 +386,7 @@ if __name__ == "__main__":
     parser.add_argument("--p", type=int, default=97)
     parser.add_argument("--split_ratio", type=float, default=0.5)
     # Optimizer
+    parser.add_argument("--budget", type=int, default=3e6)
     parser.add_argument("--filter", type=str, default="none")
     parser.add_argument("--wd", type=float, default=0)
     parser.add_argument("--optimizer", type=str, default="AdamW")
@@ -404,6 +405,7 @@ if __name__ == "__main__":
     args.p = parsed_args.p
     args.split_ratio = parsed_args.split_ratio
     # Optimizer
+    args.budget = parsed_args.budget
     args.filter = parsed_args.filter
     args.save_weights = True
     args.weight_decay = parsed_args.wd
@@ -423,6 +425,9 @@ if __name__ == "__main__":
     window_size_str = f'_w{args.window_size}'
     alpha_str = f'_a{args.alpha:.3f}'.replace('.', '')
     lamb_str = f'_l{int(args.lamb)}'
+
+    # Data split
+    split_str = f'_split{int(args.split_ratio * 100)}'
 
     if args.filter == 'none':
         filter_suffix = ''
@@ -445,7 +450,7 @@ if __name__ == "__main__":
     if args.explicit_hessian_regularization != 0:
         optim_suffix = optim_suffix + f'_her{args.explicit_hessian_regularization:.1e}'.replace('.', '')
 
-    args.label = args.label + filter_str + filter_suffix + optim_suffix
+    args.label = args.label + split_str + filter_str + filter_suffix + optim_suffix
     print(f'Experiment results saved under name: {args.label}')
 
     main(args)
