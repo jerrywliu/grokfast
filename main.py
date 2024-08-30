@@ -386,7 +386,7 @@ if __name__ == "__main__":
     parser.add_argument("--p", type=int, default=97)
     parser.add_argument("--split_ratio", type=float, default=0.5)
     # Optimizer
-    parser.add_argument("--budget", type=int, default=3e6)
+    parser.add_argument("--budget", type=int, default=300000)
     parser.add_argument("--filter", type=str, default="none")
     parser.add_argument("--wd", type=float, default=0)
     parser.add_argument("--optimizer", type=str, default="AdamW")
