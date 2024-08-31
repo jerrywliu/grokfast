@@ -381,6 +381,7 @@ def main(args):
             
 if __name__ == "__main__":
     parser = ArgumentParser()
+    parser.add_argument("--seed", type=int, default=0)
     # Data
     parser.add_argument("--task", type=str, default="multiplication")
     parser.add_argument("--p", type=int, default=97)
@@ -400,6 +401,8 @@ if __name__ == "__main__":
     
     # Instantiate and set values
     args = ExptSettings()
+    # Seed
+    args.seed = parsed_args.seed
     # Data
     args.label = args.task = parsed_args.task
     args.p = parsed_args.p
@@ -450,7 +453,9 @@ if __name__ == "__main__":
     if args.explicit_hessian_regularization != 0:
         optim_suffix = optim_suffix + f'_her{args.explicit_hessian_regularization:.1e}'.replace('.', '')
 
-    args.label = args.label + split_str + filter_str + filter_suffix + optim_suffix
+    seed_suffix = f'_seed{args.seed}'
+
+    args.label = args.label + split_str + filter_str + filter_suffix + optim_suffix + seed_suffix
     print(f'Experiment results saved under name: {args.label}')
 
     main(args)
