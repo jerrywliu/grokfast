@@ -13,7 +13,8 @@ class Block(nn.Module):
         self.attn = nn.MultiheadAttention(dim, num_heads)
         self.mlp = nn.Sequential(
             nn.Linear(dim, dim * 4),
-            nn.GELU(),
+            # nn.GELU(),
+            nn.ReLU(),
             nn.Linear(dim * 4, dim),
         )
 

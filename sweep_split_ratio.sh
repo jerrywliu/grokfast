@@ -1,8 +1,9 @@
 #!/bin/bash
 
-split_ratios=$(seq 0.1 0.05 0.95)
+# split_ratios=$(seq 0.1 0.05 0.95)
+split_ratios=$(seq 0.95 -0.05 0.1)
 gpus=(0 1 2 3)
-cmd="python main.py --task quad2 --budget 300000 --seed 0"
+cmd="python main.py --task quad1 --budget 300000 --seed 1"
 
 for ratio in $split_ratios; do
     while true; do
